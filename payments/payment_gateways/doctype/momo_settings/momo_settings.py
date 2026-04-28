@@ -31,12 +31,13 @@ class MoMoSettings(Document):
         frappe.db.commit()
 
     def _get_connector(self):
+        use_sandbox = bool(self.use_sandbox)
         return MomoConnector(
-            env="sandbox" if self.use_sandbox else "production",
+            env="sandbox" if use_sandbox else "production",
             api_user_id=self.api_user_id,
             api_key=self.get_password("api_key"),
             subscription_key=self.get_password("subscription_key"),
-            target_environment=self.target_environment
+            target_environment="sandbox" if use_sandbox else self.target_environment,
         )
 
     def get_payment_url(self, **kwargs):
