@@ -310,6 +310,106 @@ def generate_payment_url(payment_request_name):
     frappe.db.commit()
     return url
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAYMENT REQUEST FLOW — direct lookup by PR name, no cache/token indirection.
+# Use these endpoints when the user is paying an existing Payment Request
+# (e.g. PR generated from a Sales Invoice). The webshop flow below is for
+# anonymous-cart checkouts and is intentionally kept separate.
+# ──────────────────────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def initiate_pr_payment(payment_request_name, phone):
+    """Trigger an MTN MoMo request-to-pay for an existing Payment Request."""
+    if not payment_request_name:
+        return {"error": "Missing payment_request_name."}
+
+    pr = frappe.get_doc("Payment Request", payment_request_name)
+
+    gw_full = pr.payment_gateway or ""
+    if not gw_full.startswith("MoMo-"):
+        return {"error": f"Payment Request {pr.name} is not configured for MoMo."}
+    bare_name = gw_full[len("MoMo-"):]
+
+    settings_name = frappe.db.get_value("MoMo Settings", {"gateway_name": bare_name}, "name")
+    if not settings_name:
+        return {"error": f"MoMo Settings not found for gateway: {bare_name}"}
+
+    clean_phone = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if len(clean_phone) < 9:
+        return {"error": "Please enter a valid MTN phone number."}
+    if len(clean_phone) == 9:
+        clean_phone = "237" + clean_phone
+
+    int_amount = str(int(float(pr.grand_total)))
+    callback_url = frappe.utils.get_url(
+        "/api/method/payments.payment_gateways.doctype.momo_settings.momo_settings.verify_transaction"
+    )
+
+    momo_doc = frappe.get_doc("MoMo Settings", settings_name)
+    connector = momo_doc._get_connector()
+    response = connector.request_to_pay(
+        amount=int_amount,
+        currency=pr.currency,
+        payer_msisdn=clean_phone,
+        external_id=pr.name,
+        callback_url=callback_url,
+    )
+
+    if not response or not response.get("referenceId"):
+        return {"error": "MTN did not return a reference ID. Check phone number and try again."}
+
+    reference_id = response["referenceId"]
+
+    args = frappe._dict(
+        sender=clean_phone, request_amount=int_amount,
+        currency=pr.currency, order_id=pr.name,
+        reference_doctype="Payment Request", reference_docname=pr.name,
+    )
+    create_request_log(args, "Host", "MoMo", reference_id)
+    frappe.db.set_value("Integration Request", reference_id, {
+        "reference_doctype": "Payment Request",
+        "reference_docname": pr.name,
+    })
+    frappe.db.commit()
+
+    return {"reference_id": reference_id, "payment_request": pr.name}
+
+
+@frappe.whitelist()
+def finalize_pr_payment(payment_request_name, reference_id):
+    """
+    Finalize an MTN-confirmed Payment Request by delegating to Frappe Payments'
+    canonical on_payment_authorized hook. Idempotent.
+    """
+    if not (payment_request_name and reference_id):
+        return {"error": "payment_request_name and reference_id are required."}
+
+    if not frappe.db.exists("Payment Request", payment_request_name):
+        return {"error": f"Payment Request {payment_request_name} not found."}
+
+    original_user = frappe.session.user
+    try:
+        frappe.set_user("Administrator")
+
+        if frappe.db.exists("Integration Request", reference_id):
+            frappe.db.set_value("Integration Request", reference_id, "status", "Completed")
+
+        pr = frappe.get_doc("Payment Request", payment_request_name)
+        if pr.status != "Paid":
+            pr.run_method("on_payment_authorized", "Completed")
+
+        frappe.db.commit()
+        redirect_to = f"/payment-success?doctype={pr.reference_doctype}&docname={pr.reference_name}"
+        return {"payment_request": pr.name, "redirect_to": redirect_to}
+
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "MoMo Finalize PR Error")
+        return {"error": "Could not finalize Payment Request. See Error Log."}
+    finally:
+        frappe.set_user(original_user)
+
+
 @frappe.whitelist(allow_guest=True)
 def verify_transaction(**kwargs):
     """Unified Webhook Handler for all MTN MoMo Callbacks."""
@@ -335,13 +435,15 @@ def verify_transaction(**kwargs):
                     "momo_transaction_verified": 1,
                     "momo_transaction_id": momo_id
                 })
-            
+
             if integration_request.reference_doctype == "Payment Request":
+                # Defer to the canonical Frappe Payments hook on the PR's reference doc.
+                # on_payment_authorized handles PE creation, PR status, and downstream effects.
+                # Idempotent: safe even if poll_webshop_transaction already finalized.
                 pr = frappe.get_doc("Payment Request", integration_request.reference_docname)
                 if pr.status != "Paid":
-                    pr.create_payment_entry()
-                finalize_webshop_payment(pr.name)
-            
+                    pr.run_method("on_payment_authorized", "Completed")
+
             frappe.db.commit()
         except Exception:
             frappe.log_error(frappe.get_traceback(), "MoMo Callback Processing Error")
@@ -349,8 +451,26 @@ def verify_transaction(**kwargs):
             frappe.set_user(original_user)
     else:
         integration_request.handle_failure(data)
-    
+        _record_mtn_failure(ref_id, data)
+
     return {"status": "processed"}
+
+
+def _record_mtn_failure(reference_id, mtn_response):
+    """Persist MTN's failure reason on the Integration Request so it's visible in the UI."""
+    try:
+        reason = mtn_response.get("reason") if isinstance(mtn_response, dict) else None
+        if isinstance(reason, dict):
+            reason_text = f"{reason.get('code', '')}: {reason.get('message', '')}".strip(": ")
+        else:
+            reason_text = str(reason or mtn_response)
+        frappe.db.set_value("Integration Request", reference_id, {
+            "error": reason_text or "MTN returned FAILED with no reason payload",
+            "output": frappe.as_json(mtn_response, indent=2),
+        }, update_modified=False)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "MoMo: failed to record MTN failure reason")
 
 @frappe.whitelist(allow_guest=True)
 def request_for_payment_by_gateway(gateway_name, **kwargs):
@@ -548,14 +668,19 @@ def poll_webshop_transaction(reference_id, gateway_name=None):
 
         if mtn_status == "SUCCESSFUL":
             # Update DB so callback isn't needed
-            frappe.db.set_value("Integration Request", reference_id, "status", "Completed")
+            frappe.db.set_value("Integration Request", reference_id, {
+                "status": "Completed",
+                "output": frappe.as_json(mtn_resp, indent=2),
+            })
             frappe.db.commit()
             return {"status": "SUCCESSFUL"}
 
         if mtn_status == "FAILED":
+            _record_mtn_failure(reference_id, mtn_resp)
             frappe.db.set_value("Integration Request", reference_id, "status", "Failed")
             frappe.db.commit()
-            return {"status": "FAILED"}
+            reason = mtn_resp.get("reason") if isinstance(mtn_resp, dict) else None
+            return {"status": "FAILED", "reason": reason}
 
         return {"status": "PENDING"}
 

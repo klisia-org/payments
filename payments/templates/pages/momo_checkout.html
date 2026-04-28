@@ -171,7 +171,7 @@
     </div>
 
     <div class="footer-note">
-      🔒 Secure payment via MTN MoMo &nbsp;·&nbsp; You'll enter your PIN on your phone
+      🔒 Secure payment via MTN MoMo &nbsp;·&nbsp; Confirm the prompt on your phone
     </div>
   </div>
 </div>
@@ -179,10 +179,12 @@
 <script>
 frappe.ready(function () {
     /* ── Constants from server ── */
-    const TOKEN    = {{ token | tojson }};
-    const GATEWAY  = {{ gateway_name | tojson }};
-    const AMOUNT   = {{ amount | tojson }};
-    const CURRENCY = {{ currency | tojson }};
+    const TOKEN              = {{ token | tojson }};
+    const GATEWAY            = {{ gateway_name | tojson }};
+    const AMOUNT             = {{ amount | tojson }};
+    const CURRENCY           = {{ currency | tojson }};
+    const IS_PAYMENT_REQUEST = {{ is_payment_request | tojson }};
+    const PR_NAME            = {{ payment_request_name | tojson }};
 
     /* ── Polling config ── */
     const POLL_INTERVAL_MS  = 4000;   // check every 4 seconds
@@ -223,20 +225,27 @@ frappe.ready(function () {
         cancelled = false;
         showStatusPanel();
         setStep(2);
-        setSpinner("Sending payment request…", "Check your phone in a moment");
+        setSpinner("Sending payment request…", "Contacting MTN MoMo");
+
+        const initMethod = IS_PAYMENT_REQUEST
+            ? "payments.payment_gateways.doctype.momo_settings.momo_settings.initiate_pr_payment"
+            : "payments.payment_gateways.doctype.momo_settings.momo_settings.initiate_webshop_payment";
+        const initArgs = IS_PAYMENT_REQUEST
+            ? { payment_request_name: PR_NAME, phone: raw }
+            : { token: TOKEN, gateway_name: GATEWAY, phone: raw };
 
         frappe.call({
-            method: "payments.payment_gateways.doctype.momo_settings.momo_settings.initiate_webshop_payment",
-            args: { token: TOKEN, gateway_name: GATEWAY, phone: raw },
+            method: initMethod,
+            args: initArgs,
             callback: function (r) {
                 if (cancelled) return;
                 if (r.message && r.message.reference_id) {
                     currentRefId = r.message.reference_id;
                     setSpinner(
-                        "Waiting for your PIN…",
-                        "A prompt has been sent to your phone. Enter your MoMo PIN to confirm."
+                        "Waiting for confirmation…",
+                        "Approve the prompt on your phone (sandbox auto-resolves in ~10s)."
                     );
-                    showInlineAlert("info", "📱 Check your phone now and enter your MoMo PIN.");
+                    showInlineAlert("info", "📱 Confirm on your phone to complete payment.");
                     $cancelBtn.show();
                     startPolling(currentRefId);
                 } else {
@@ -287,25 +296,44 @@ frappe.ready(function () {
                         stopPolling();
                         setStep(3);
                         showInlineAlert("success", "✅ Payment confirmed!");
-                        setSpinner("Creating your order…", "Almost done, please wait.");
+                        setSpinner("Finalizing…", "Almost done, please wait.");
+
+                        const finalizeMethod = IS_PAYMENT_REQUEST
+                            ? "payments.payment_gateways.doctype.momo_settings.momo_settings.finalize_pr_payment"
+                            : "payments.payment_gateways.doctype.momo_settings.momo_settings.finalize_webshop_order";
+                        const finalizeArgs = IS_PAYMENT_REQUEST
+                            ? { payment_request_name: PR_NAME, reference_id: referenceId }
+                            : { token: TOKEN, reference_id: referenceId };
 
                         frappe.call({
-                            method: "payments.payment_gateways.doctype.momo_settings.momo_settings.finalize_webshop_order",
-                            args: { token: TOKEN, reference_id: referenceId },
+                            method: finalizeMethod,
+                            args: finalizeArgs,
                             callback: function (fr) {
-                                if (fr.message && fr.message.sales_order) {
-                                    onSuccess(fr.message.sales_order);
+                                const m = fr.message || {};
+                                if (IS_PAYMENT_REQUEST) {
+                                    if (m.payment_request && !m.error) {
+                                        onPRSuccess(m.redirect_to);
+                                    } else {
+                                        showResult("⚠️", "Payment received!", "Finalization had an issue. Contact support with reference: " + referenceId);
+                                        showInlineAlert("warning", m.error || "");
+                                    }
                                 } else {
-                                    /* Payment OK but order creation had issues */
-                                    showResult("⚠️", "Payment received!", "Your order is being processed. You'll receive a confirmation email shortly.");
-                                    showInlineAlert("warning", fr.message && fr.message.error ? fr.message.error : "");
+                                    if (m.sales_order) {
+                                        onSuccess(m.sales_order);
+                                    } else {
+                                        showResult("⚠️", "Payment received!", "Your order is being processed. You'll receive a confirmation email shortly.");
+                                        showInlineAlert("warning", m.error || "");
+                                    }
                                 }
                             }
                         });
 
                     } else if (status === "FAILED") {
                         stopPolling();
-                        onFailure("Payment was declined or cancelled by MTN. Please try again.");
+                        const reason = (r.message && r.message.reason) || null;
+                        let msg = "Payment was declined or cancelled by MTN.";
+                        if (reason && reason.code) msg += " (" + reason.code + (reason.message ? ": " + reason.message : "") + ")";
+                        onFailure(msg + " Please try again.");
 
                     } else if (status === "TIMEOUT" || pollCount >= MAX_POLLS) {
                         stopPolling();
@@ -344,6 +372,13 @@ frappe.ready(function () {
         showResult("✅", "Order placed!", "Redirecting to your order…");
         setTimeout(function () {
             window.location.href = "/orders?doctype=Sales+Order&name=" + soName;
+        }, 2000);
+    }
+
+    function onPRSuccess(redirectTo) {
+        showResult("✅", "Payment received!", "Thank you. Redirecting…");
+        setTimeout(function () {
+            window.location.href = redirectTo || "/";
         }, 2000);
     }
 
