@@ -2,9 +2,10 @@ from . import __version__ as app_version
 
 app_name = "payments"
 app_title = "Payments"
-app_publisher = "Frappe Technologies"
-app_description = "Payments app for frappe"
-app_email = "hello@frappe.io"
+app_publisher = "Klisia and Frappe Technologies"
+app_description = "Payments app for Frappe and SeminaryERP"
+source_link = "https://github.com/klisia-org/payments"
+app_email = "support@seminaryerp.org"
 app_license = "MIT"
 
 # Includes in <head>
@@ -41,7 +42,9 @@ doctype_js = {"Payment Request": "public/js/payment_request.js"}
 # role_home_page = {
 #     "Role": "home_page"
 # }
-
+website_route_rules = [
+    {"from_route": "/momo_checkout", "to_route": "momo_checkout"},
+]
 # Generators
 # ----------
 
