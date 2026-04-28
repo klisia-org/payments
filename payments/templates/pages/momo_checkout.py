@@ -13,7 +13,12 @@ def get_context(context):
         We read cart_data from cache as before.
     """
     fd = frappe.form_dict
-    pr_name = fd.get("payment_request_name") or fd.get("order_id")
+    # Accept any of the conventional keys used by callers (button, email link, etc.)
+    pr_name = (
+        fd.get("payment_request_name")
+        or fd.get("order_id")
+        or (fd.get("reference_docname") if fd.get("reference_doctype") == "Payment Request" else None)
+    )
     token = fd.get("token")
 
     if pr_name:

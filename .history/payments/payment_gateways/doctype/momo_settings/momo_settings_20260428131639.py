@@ -429,6 +429,7 @@ def finalize_pr_payment(payment_request_name, reference_id):
 
 
 def _pr_success_redirect(pr):
+    if self.data.get("redirect_to") or None
     if pr.reference_doctype and pr.reference_name:
         return f"/payment-success?doctype={pr.reference_doctype}&docname={pr.reference_name}"
     return "/payment-success"
