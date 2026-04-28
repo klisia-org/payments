@@ -420,36 +420,40 @@ def initiate_webshop_payment(token, gateway_name, phone):
     # Build full gateway name
     gw_full = "MoMo-" + gateway_name if not gateway_name.startswith("MoMo-") else gateway_name
 
-    pga = frappe.db.get_value(
-        "Payment Gateway Account",
-        {"payment_gateway": gw_full},
-        ["name", "payment_account", "currency"],
-        as_dict=True,
-    )
+    if cart_data.get("payment_request_name"):
+        # Payment Request flow: PR already exists (created from Sales Invoice / Sales Order).
+        pr = frappe.get_doc("Payment Request", cart_data.payment_request_name)
+    else:
+        # Webshop flow: mint a lightweight PR against the cart's Quotation.
+        pga = frappe.db.get_value(
+            "Payment Gateway Account",
+            {"payment_gateway": gw_full},
+            ["name", "payment_account", "currency"],
+            as_dict=True,
+        )
 
-    # Create a lightweight Payment Request (no SO yet — reference is the token)
-    pr = frappe.new_doc("Payment Request")
-    pr.payment_request_type = "Inward"
-    pr.party_type = "Customer"
-    pr.party = cart_data.customer
-    pr.reference_doctype = "Quotation"
-    pr.reference_name = cart_data.quotation_name
-    pr.payment_gateway_account = pga.name if pga else ""
-    pr.payment_gateway = gw_full
-    pr.payment_account = pga.payment_account if pga else ""
-    pr.currency = cart_data.currency
-    pr.grand_total = cart_data.grand_total
-    pr.base_grand_total = cart_data.grand_total
-    pr.outstanding_amount = cart_data.grand_total
-    pr.email_to = cart_data.contact_email or cart_data.customer
-    pr.subject = f"Webshop payment for {cart_data.customer_name}"
-    pr.flags.ignore_permissions = True
-    pr.insert()
-    frappe.db.set_value("Payment Request", pr.name, {"docstatus": 1, "status": "Requested"})
+        pr = frappe.new_doc("Payment Request")
+        pr.payment_request_type = "Inward"
+        pr.party_type = "Customer"
+        pr.party = cart_data.customer
+        pr.reference_doctype = "Quotation"
+        pr.reference_name = cart_data.quotation_name
+        pr.payment_gateway_account = pga.name if pga else ""
+        pr.payment_gateway = gw_full
+        pr.payment_account = pga.payment_account if pga else ""
+        pr.currency = cart_data.currency
+        pr.grand_total = cart_data.grand_total
+        pr.base_grand_total = cart_data.grand_total
+        pr.outstanding_amount = cart_data.grand_total
+        pr.email_to = cart_data.contact_email or cart_data.customer
+        pr.subject = f"Webshop payment for {cart_data.customer_name}"
+        pr.flags.ignore_permissions = True
+        pr.insert()
+        frappe.db.set_value("Payment Request", pr.name, {"docstatus": 1, "status": "Requested"})
 
-    # Store PR name back into the token cache so finalize can find it
-    cart_data["payment_request"] = pr.name
-    frappe.cache().set_value(f"momo_pending_{token}", json.dumps(cart_data), expires_in_sec=1800)
+        # Store PR name back into the token cache so finalize can find it
+        cart_data["payment_request"] = pr.name
+        frappe.cache().set_value(f"momo_pending_{token}", json.dumps(cart_data), expires_in_sec=1800)
 
     # Clean and format phone
     clean_phone = "".join(filter(str.isdigit, str(phone)))
