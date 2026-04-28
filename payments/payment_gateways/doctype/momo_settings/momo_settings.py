@@ -429,6 +429,21 @@ def finalize_pr_payment(payment_request_name, reference_id):
 
 
 def _pr_success_redirect(pr):
+    """
+    Resolve the post-payment redirect URL.
+    Precedence:
+      1. `redirect_to` configured on the PR's MoMo Settings (lets downstream apps
+         like seminaryerp pin a custom landing page).
+      2. /payment-success?doctype=…&docname=… for the PR's reference doc.
+      3. /payment-success bare.
+    """
+    gw_full = pr.payment_gateway or ""
+    if gw_full.startswith("MoMo-"):
+        bare = gw_full[len("MoMo-"):]
+        configured = frappe.db.get_value("MoMo Settings", {"gateway_name": bare}, "redirect_to")
+        if configured:
+            return configured
+
     if pr.reference_doctype and pr.reference_name:
         return f"/payment-success?doctype={pr.reference_doctype}&docname={pr.reference_name}"
     return "/payment-success"
