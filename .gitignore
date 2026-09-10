@@ -8,3 +8,9 @@ node_modules/
 __pycache__/
 .aider*
 .helix
+
+# VS Code Local History - per-machine editor snapshots, not source
+.history/
+
+# Claude Code: the shared settings.json is versioned, the local override is not
+.claude/settings.local.json
