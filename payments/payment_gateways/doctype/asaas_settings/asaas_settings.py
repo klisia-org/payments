@@ -351,7 +351,20 @@ class AsaasSettings(Document):
 				return url
 
 	def get_cycle(self, details):
-		cycle = details.get("cycle") or BILLING_PERIOD_TO_CYCLE.get(details.get("billing_period"))
+		"""Resolve the cycle to bill on, refusing what Asaas cannot charge.
+
+		The `billing_period` vocabulary is wider than Asaas - Razorpay documents
+		"Day", PayPal "SemiMonth" - so a period with no cycle behind it is an
+		error. Falling back to the default would bill the payer monthly for a
+		subscription they asked to be charged daily.
+		"""
+		cycle = details.get("cycle")
+
+		if not cycle and (period := details.get("billing_period")):
+			cycle = BILLING_PERIOD_TO_CYCLE.get(period)
+			if not cycle:
+				frappe.throw(_("Asaas cannot bill on a {0} period").format(period))
+
 		if cycle and cycle not in BILLING_CYCLES:
 			frappe.throw(_("{0} is not a billing cycle supported by Asaas").format(cycle))
 
