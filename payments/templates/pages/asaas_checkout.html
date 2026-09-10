@@ -1,0 +1,86 @@
+{% extends "templates/web.html" %}
+
+{% block title %} {{ _("Payment") }} {% endblock %}
+
+{%- block header -%}{% endblock %}
+
+{% block script %}
+<script>{% include "templates/includes/asaas_checkout.js" %}</script>
+{% endblock %}
+
+{%- block page_content -%}
+<div class="asaas-checkout">
+	<div class="asaas-summary">
+		<div class="asaas-title">{{ title }}</div>
+		<div class="asaas-amount">
+			{{ formatted_amount }}
+			{% if is_subscription %}<span class="asaas-recurring">{{ _("recurring") }}</span>{% endif %}
+		</div>
+	</div>
+
+	<form id="payment-form">
+		<p class="text-muted">
+			{{ _("Asaas requires a CPF or CNPJ to issue the charge. You will pick between Boleto, Pix and card on the next page.") }}
+		</p>
+
+		<div class="form-group">
+			<label for="payer-name">{{ _("Full Name") }}</label>
+			<input type="text" class="form-control" id="payer-name" value="{{ payer_name or '' }}" required>
+		</div>
+
+		<div class="form-group">
+			<label for="cpf-cnpj">{{ _("CPF / CNPJ") }}</label>
+			<input type="text" class="form-control" id="cpf-cnpj" inputmode="numeric"
+				placeholder="000.000.000-00" autocomplete="off" required>
+			<div class="text-danger small hidden" id="cpf-cnpj-error">
+				{{ _("Please enter a valid CPF or CNPJ.") }}
+			</div>
+		</div>
+
+		<div class="form-group">
+			<label for="payer-phone">{{ _("Mobile Phone") }} <span class="text-muted">({{ _("optional") }})</span></label>
+			<input type="tel" class="form-control" id="payer-phone" placeholder="(11) 90000-0000" autocomplete="off">
+		</div>
+
+		<button class="btn btn-primary btn-block" type="submit" id="submit-button">
+			{{ _("Continue to Payment") }}
+		</button>
+	</form>
+</div>
+
+<style>
+.asaas-checkout {
+	max-width: 420px;
+	margin: 40px auto;
+}
+
+.asaas-summary {
+	margin-bottom: 24px;
+	padding-bottom: 16px;
+	border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.asaas-title {
+	color: var(--text-muted, #6c7680);
+}
+
+.asaas-amount {
+	font-size: 24px;
+	font-weight: 600;
+}
+
+.asaas-recurring {
+	font-size: 13px;
+	font-weight: 400;
+	color: var(--text-muted, #6c7680);
+}
+
+#payment-form {
+	margin-top: 24px;
+}
+
+#submit-button {
+	margin-top: 24px;
+}
+</style>
+{% endblock %}
