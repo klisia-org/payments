@@ -7,7 +7,7 @@ A payments app for frappe.
 
 2. Once setup is complete, add the payments app to your bench by running
     ```
-    $ bench get-app payments
+    $ bench get-app https://github.com/klisia-org/payments
     ```
 3. Install the payments app on the required site by running
     ```
@@ -27,9 +27,6 @@ All general utils are stored in [utils](payments/utils) directory. The utils are
 
 [templates](payments/templates) directory has all the payment gateways' custom checkout pages.
 
-## Ongoing Work
-- New API design: https://github.com/frappe/payments/pull/53
-- Mollie Integration: https://github.com/frappe/payments/pull/68 (awaiting the former, but you may use the branc)
 
 ## License
 MIT ([license.txt](license.txt))
