@@ -2,9 +2,10 @@ from . import __version__ as app_version
 
 app_name = "payments"
 app_title = "Payments"
-app_publisher = "Frappe Technologies"
-app_description = "Payments app for frappe"
-app_email = "hello@frappe.io"
+app_publisher = "Klisia and Frappe Technologies"
+app_description = "Payments app for Frappe and SeminaryERP"
+source_link = "https://github.com/klisia-org/payments"
+app_email = "support@seminaryerp.org"
 app_license = "MIT"
 
 # Includes in <head>
@@ -29,7 +30,7 @@ app_license = "MIT"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Payment Request": "public/js/payment_request.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -44,6 +45,10 @@ app_license = "MIT"
 # role_home_page = {
 # 	"Role": "home_page"
 # }
+
+website_route_rules = [
+	{"from_route": "/momo_checkout", "to_route": "momo_checkout"},
+]
 
 # Generators
 # ----------
@@ -100,13 +105,11 @@ extend_doctype_class = {"Web Form": "payments.overrides.payment_webform.PaymentW
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Sales Invoice": {
+		"on_submit": "payments.payment_gateways.doctype.momo_settings.momo_settings.on_sales_invoice_submit",
+	}
+}
 
 # Scheduled Tasks
 # ---------------
@@ -114,6 +117,9 @@ extend_doctype_class = {"Web Form": "payments.overrides.payment_webform.PaymentW
 scheduler_events = {
 	"all": [
 		"payments.payment_gateways.doctype.razorpay_settings.razorpay_settings.capture_payment",
+	],
+	"hourly": [
+		"payments.payment_gateways.doctype.momo_settings.momo_settings.poll_pending_transactions",
 	],
 }
 

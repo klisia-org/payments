@@ -17,7 +17,7 @@ A payments app for frappe.
 ## App Structure & Details
 App has 2 modules - Payments and Payment Gateways.
 
-Payment Module contains the Payment Gateway DocType which creates links for the payment gateways and Payment Gateways Module contain all the Payment Gateway (Razorpay, Stripe, Braintree, Paypal, PayTM) DocTypes.
+Payment Module contains the Payment Gateway DocType which creates links for the payment gateways and Payment Gateways Module contain all the Payment Gateway (Razorpay, Stripe, Braintree, Paypal, PayTM, Asaas) DocTypes.
 
 App adds custom fields to Web Form for facilitating payments upon installation and removes them upon uninstallation.
 
