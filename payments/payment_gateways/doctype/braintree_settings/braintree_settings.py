@@ -11,6 +11,7 @@ from frappe.model.document import Document
 from frappe.utils import call_hook_method, get_url
 
 from payments.utils import create_payment_gateway
+from payments.utils.recording import record_payment
 
 
 class BraintreeSettings(Document):
@@ -249,10 +250,13 @@ class BraintreeSettings(Document):
 			status = "Completed"
 			if self.data.reference_doctype and self.data.reference_docname:
 				custom_redirect_to = None
+				custom_redirect_to = record_payment(
+					self.integration_request,
+					self.data.reference_doctype,
+					self.data.reference_docname,
+					self.flags.status_changed_to,
+				)
 				try:
-					custom_redirect_to = frappe.get_doc(
-						self.data.reference_doctype, self.data.reference_docname
-					).run_method("on_payment_authorized", self.flags.status_changed_to)
 					braintree_success_page = frappe.get_hooks("braintree_success_page")
 					if braintree_success_page:
 						custom_redirect_to = frappe.get_attr(braintree_success_page[-1])(self.data)

@@ -120,6 +120,7 @@ scheduler_events = {
 	],
 	"hourly": [
 		"payments.payment_gateways.doctype.momo_settings.momo_settings.poll_pending_transactions",
+		"payments.payments.doctype.unrecorded_payment.unrecorded_payment.retry_unrecorded_payments",
 	],
 }
 

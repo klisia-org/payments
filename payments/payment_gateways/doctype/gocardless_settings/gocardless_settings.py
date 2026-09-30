@@ -11,6 +11,8 @@ from frappe.integrations.utils import create_request_log
 from frappe.model.document import Document
 from frappe.utils import call_hook_method, cint, flt, get_url
 
+from payments.utils.recording import record_payment
+
 
 class GoCardlessSettings(Document):
 	supported_currencies = ("EUR", "DKK", "GBP", "SEK", "AUD", "NZD", "CAD", "USD")
@@ -176,12 +178,12 @@ class GoCardlessSettings(Document):
 			status = "Completed"
 			if "reference_doctype" in self.data and "reference_docname" in self.data:
 				custom_redirect_to = None
-				try:
-					custom_redirect_to = frappe.get_doc(
-						self.data.get("reference_doctype"), self.data.get("reference_docname")
-					).run_method("on_payment_authorized", self.flags.status_changed_to)
-				except Exception:
-					frappe.log_error("Gocardless redirect failed")
+				custom_redirect_to = record_payment(
+					self.integration_request,
+					self.data.get("reference_doctype"),
+					self.data.get("reference_docname"),
+					self.flags.status_changed_to,
+				)
 
 				if custom_redirect_to:
 					redirect_to = custom_redirect_to

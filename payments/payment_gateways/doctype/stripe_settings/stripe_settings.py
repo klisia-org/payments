@@ -11,6 +11,7 @@ from frappe.model.document import Document
 from frappe.utils import call_hook_method, cint, flt, get_url
 
 from payments.utils import create_payment_gateway
+from payments.utils.recording import record_payment
 
 currency_wise_minimum_charge_amount = {
 	"JPY": 50,
@@ -248,12 +249,12 @@ class StripeSettings(Document):
 		if self.flags.status_changed_to == "Completed":
 			if self.data.reference_doctype and self.data.reference_docname:
 				custom_redirect_to = None
-				try:
-					custom_redirect_to = frappe.get_doc(
-						self.data.reference_doctype, self.data.reference_docname
-					).run_method("on_payment_authorized", self.flags.status_changed_to)
-				except Exception:
-					frappe.log_error(frappe.get_traceback())
+				custom_redirect_to = record_payment(
+					self.integration_request,
+					self.data.reference_doctype,
+					self.data.reference_docname,
+					self.flags.status_changed_to,
+				)
 
 				if custom_redirect_to:
 					redirect_to = custom_redirect_to

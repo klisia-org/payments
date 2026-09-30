@@ -7,6 +7,10 @@ import frappe
 from frappe import _
 from frappe.utils import flt, fmt_money
 
+from payments.payment_gateways.doctype.asaas_settings.asaas_settings import (
+	get_payer_tax_id,
+	mask_cpf_cnpj,
+)
 from payments.utils.utils import validate_integration_request
 
 no_cache = 1
@@ -39,6 +43,8 @@ def get_context(context):
 		context["amount"] = flt(context["amount"])
 		context["formatted_amount"] = fmt_money(context["amount"], currency=context["currency"])
 		context["is_subscription"] = bool(payment_details.get("subscription_details"))
+		cpf_cnpj = get_payer_tax_id(payment_details)
+		context["cpf_cnpj_on_file"] = mask_cpf_cnpj(cpf_cnpj) if cpf_cnpj else None
 
 	except Exception:
 		frappe.redirect_to_message(
@@ -53,7 +59,8 @@ def get_context(context):
 
 
 @frappe.whitelist(allow_guest=True)
-def make_payment(token, cpf_cnpj, payer_name=None, payer_phone=None):
+def make_payment(token, cpf_cnpj=None, payer_name=None, payer_phone=None):
+	# a blank cpf_cnpj means "the one on file", looked up again server-side
 	validate_integration_request(token)
 
 	data = frappe.get_doc("Asaas Settings").create_request(

@@ -14,6 +14,7 @@ from payments.payment_gateways.paymob.accept_api import AcceptAPI
 from payments.payment_gateways.paymob.hmac_validator import HMACValidator
 from payments.payment_gateways.paymob.paymob_urls import PaymobUrls
 from payments.payment_gateways.paymob.response_codes import SUCCESS
+from payments.utils.recording import record_payment
 
 
 class PaymobSettings(Document):
@@ -210,7 +211,7 @@ def callback():
 			integration_request_doc.save(ignore_permissions=True)
 			frappe.db.commit()
 
-			handle_payment_success(integration_request_dict)
+			handle_payment_success(integration_request_dict, integration_request_doc)
 
 		else:
 			integration_request_doc.error = (
@@ -243,19 +244,16 @@ def get_integration_request(paymob_order_id):
 	return frappe.get_doc("Integration Request", integration_requests[0].name)
 
 
-def handle_payment_success(integration_request_dict):
+def handle_payment_success(integration_request_dict, integration_request=None):
 	"""Handle post-success payments"""
 
 	redirect_to = integration_request_dict["redirect_to"]
 	if integration_request_dict["reference_doctype"] and integration_request_dict["reference_docname"]:
-		custom_redirect_to = None
-		try:
-			custom_redirect_to = frappe.get_doc(
-				integration_request_dict["reference_doctype"], integration_request_dict["reference_docname"]
-			).run_method("on_payment_authorized", "Completed")
-
-		except Exception:
-			frappe.log_error(frappe.get_traceback())
+		custom_redirect_to = record_payment(
+			integration_request,
+			integration_request_dict["reference_doctype"],
+			integration_request_dict["reference_docname"],
+		)
 
 		if custom_redirect_to:
 			redirect_to = custom_redirect_to

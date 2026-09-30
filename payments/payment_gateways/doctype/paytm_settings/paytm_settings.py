@@ -21,6 +21,7 @@ from frappe.utils.password import get_decrypted_password
 from paytmchecksum import generateSignature, verifySignature
 
 from payments.utils import create_payment_gateway
+from payments.utils.recording import record_payment
 
 
 class PaytmSettings(Document):
@@ -150,16 +151,11 @@ def finalize_request(order_id, transaction_response):
 	redirect_message = transaction_data.get("redirect_message") or None
 
 	if transaction_response["STATUS"] == "TXN_SUCCESS":
+		request.db_set("status", "Completed")
 		if transaction_data.reference_doctype and transaction_data.reference_docname:
-			custom_redirect_to = None
-			try:
-				custom_redirect_to = frappe.get_doc(
-					transaction_data.reference_doctype, transaction_data.reference_docname
-				).run_method("on_payment_authorized", "Completed")
-				request.db_set("status", "Completed")
-			except Exception:
-				request.db_set("status", "Failed")
-				frappe.log_error(frappe.get_traceback())
+			custom_redirect_to = record_payment(
+				request, transaction_data.reference_doctype, transaction_data.reference_docname
+			)
 
 			if custom_redirect_to:
 				redirect_to = custom_redirect_to

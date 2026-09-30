@@ -15,6 +15,7 @@ from payments.payment_gateways.doctype.mpesa_settings.mpesa_custom_fields import
 	create_custom_pos_fields,
 )
 from payments.utils import erpnext_app_import_guard
+from payments.utils.recording import record_payment
 
 
 class MpesaSettings(Document):
@@ -181,8 +182,16 @@ def verify_transaction(**kwargs):
 				mpesa_receipts = ", ".join([*mpesa_receipts, mpesa_receipt])
 
 				if total_paid >= pr.grand_total:
-					pr.run_method("on_payment_authorized", "Completed")
-					success = True
+					record_payment(
+						integration_request,
+						integration_request.reference_doctype,
+						integration_request.reference_docname,
+					)
+					# the point of sale may go on only when the payment was recorded
+					success = not frappe.db.exists(
+						"Unrecorded Payment",
+						{"integration_request": integration_request.name, "status": "Retrying"},
+					)
 
 				frappe.db.set_value("POS Invoice", pr.reference_name, "mpesa_receipt_number", mpesa_receipts)
 				integration_request.handle_success(transaction_response)

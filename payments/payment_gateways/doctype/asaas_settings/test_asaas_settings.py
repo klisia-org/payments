@@ -18,11 +18,12 @@ from werkzeug.wrappers import Request
 from payments.payment_gateways.doctype.asaas_settings.asaas_settings import (
 	MAX_CALLBACK_URL_LENGTH,
 	AsaasSettings,
-	as_user,
 	get_asaas_error_message,
 	get_description,
+	get_payer_tax_id,
 	get_success_url,
 	is_valid_cpf_cnpj,
+	mask_cpf_cnpj,
 	sanitize_cpf_cnpj,
 	webhook,
 )
@@ -129,6 +130,34 @@ def asaas_calls_back(payload, token=WEBHOOK_TOKEN):
 		delattr(frappe.local, "request")
 
 
+PAYER_TAX_ID_HOOK = f"{__name__}.answer_payer_tax_id"
+_on_file = {"value": None, "asked": []}
+
+
+def answer_payer_tax_id(**kwargs):
+	"""What an app holding the payer's document answers through the hook."""
+	_on_file["asked"].append(kwargs)
+	if isinstance(_on_file["value"], Exception):
+		raise _on_file["value"]
+	return _on_file["value"]
+
+
+@contextmanager
+def cpf_on_file(value, hooks=(PAYER_TAX_ID_HOOK,)):
+	"""Install `answer_payer_tax_id` as the only `payer_tax_id` hook, leaving
+	every other hook alone; yields what it was asked."""
+	real_get_hooks = frappe.get_hooks
+
+	def get_hooks(hook=None, *args, **kwargs):
+		if hook == "payer_tax_id":
+			return list(hooks)
+		return real_get_hooks(hook, *args, **kwargs)
+
+	_on_file.update(value=value, asked=[])
+	with patch("frappe.get_hooks", side_effect=get_hooks):
+		yield _on_file["asked"]
+
+
 def make_settings(**values):
 	settings = frappe.get_doc({"doctype": "Asaas Settings", "api_key": "test-key", **values})
 	# what `create_request` would have put there; the charge builders only read its name
@@ -178,6 +207,28 @@ class UnitTestBrazilianDocuments(UnitTestCase):
 	def test_sanitize_rejects_invalid_document(self):
 		self.assertRaises(frappe.ValidationError, sanitize_cpf_cnpj, "111.444.777-34")
 		self.assertRaises(frappe.ValidationError, sanitize_cpf_cnpj, None)
+
+
+class UnitTestTheCpfOnFile(UnitTestCase):
+	def test_the_document_an_app_holds_is_offered_as_digits(self):
+		with cpf_on_file(VALID_CPF):
+			self.assertEqual(get_payer_tax_id(payment_details()), "11144477735")
+
+	def test_a_document_asaas_would_refuse_is_not_offered(self):
+		with cpf_on_file("111.444.777-34"):
+			self.assertIsNone(get_payer_tax_id(payment_details()))
+
+	def test_nothing_is_offered_without_an_app_that_knows(self):
+		with cpf_on_file(VALID_CPF, hooks=()):
+			self.assertIsNone(get_payer_tax_id(payment_details()))
+
+	def test_a_broken_lookup_leaves_the_payer_to_type_it(self):
+		with cpf_on_file(RuntimeError("boom")), patch("frappe.log_error"):
+			self.assertIsNone(get_payer_tax_id(payment_details()))
+
+	def test_the_page_shows_only_the_middle_digits(self):
+		self.assertEqual(mask_cpf_cnpj("11144477735"), "***.444.777-**")
+		self.assertEqual(mask_cpf_cnpj("11222333000181"), "**.222.333/0001-**")
 
 
 class UnitTestTheReturnUrl(UnitTestCase):
@@ -628,6 +679,38 @@ class IntegrationTestCreatingTheCharge(AsaasIntegrationTestCase):
 		self.assertNotIn("cpf_cnpj", json.loads(request.data))
 		self.assertEqual(json.loads(request.data)["payer_name"], "Joao da Silva")
 
+	def test_a_blank_cpf_uses_the_one_on_file(self):
+		request = self.make_request()
+		asaas = FakeAsaas(
+			{
+				("GET", "/customers"): {"data": []},
+				("POST", "/customers"): {"id": "cus_1"},
+				("POST", "/payments"): {"id": "pay_1", "invoiceUrl": INVOICE},
+			}
+		)
+
+		with asaas.installed(), contained(), cpf_on_file(VALID_CPF) as asked:
+			result = make_settings().create_request({"token": request.name, "cpf_cnpj": ""})
+
+		self.assertEqual(result["redirect_to"], INVOICE)
+		self.assertEqual(asaas.sent_to("/customers")["cpfCnpj"], "11144477735")
+		self.assertEqual(asked[0]["payer_email"], "joao@example.com")
+		request.reload()
+		self.assertNotIn("11144477735", request.data)
+
+	def test_a_blank_cpf_with_nothing_on_file_is_refused(self):
+		request = self.make_request()
+		asaas = FakeAsaas()
+
+		with asaas.installed(), contained(), cpf_on_file(None):
+			self.assertRaises(
+				frappe.ValidationError,
+				make_settings().create_request,
+				{"token": request.name, "cpf_cnpj": ""},
+			)
+
+		self.assertEqual(asaas.calls, [])
+
 	def test_a_malformed_cpf_never_reaches_asaas(self):
 		request = self.make_request()
 		asaas = FakeAsaas()
@@ -708,6 +791,32 @@ class IntegrationTestRegisteringTheWebhook(IntegrationTestCase):
 		self.assertTrue(sent["enabled"])
 		for event in ("PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "PAYMENT_REFUNDED", "PAYMENT_OVERDUE"):
 			self.assertIn(event, sent["events"])
+
+	def test_the_webhook_is_registered_with_the_users_email_not_their_name(self):
+		settings = make_settings(webhook_auth_token=WEBHOOK_TOKEN)
+		asaas = FakeAsaas({("POST", "/webhooks"): {"id": "wh_1"}})
+		email = frappe.db.get_value("User", frappe.session.user, "email")
+
+		with asaas.installed():
+			settings.register_webhook()
+
+		self.assertEqual(asaas.sent_to("/webhooks")["email"], email)
+
+	def test_a_user_without_a_valid_email_cannot_register(self):
+		settings = make_settings(webhook_auth_token=WEBHOOK_TOKEN)
+		asaas = FakeAsaas({("POST", "/webhooks"): {"id": "wh_1"}})
+
+		get_value = frappe.db.get_value
+
+		def email_is_the_user_id(doctype, *args, **kwargs):
+			if doctype == "User":
+				return "Administrator"
+			return get_value(doctype, *args, **kwargs)
+
+		with asaas.installed(), patch.object(frappe.db, "get_value", email_is_the_user_id):
+			self.assertRaises(frappe.ValidationError, settings.register_webhook)
+
+		self.assertFalse([call for call in asaas.calls if call[1] == "/webhooks"])
 
 	def test_a_registration_asaas_did_not_accept_is_not_reported_as_done(self):
 		settings = make_settings(webhook_auth_token=WEBHOOK_TOKEN)
@@ -809,11 +918,29 @@ class IntegrationTestTheWebhook(AsaasIntegrationTestCase):
 		def explode(self, payment_status):
 			raise RuntimeError("the consuming app is broken")
 
-		with patch.object(ToDo, "on_payment_authorized", explode, create=True):
+		with patch.object(ToDo, "on_payment_authorized", explode, create=True), patch("frappe.log_error"):
 			self.assertEqual(self.call(self.paid(externalReference=request.name)), {"status": "Completed"})
 
 		request.reload()
 		self.assertEqual(request.status, "Completed")
+
+		# and the payment is kept to be recorded again, as the payer
+		unrecorded = frappe.get_all(
+			"Unrecorded Payment",
+			filters={"integration_request": request.name},
+			fields=["gateway", "reference_docname", "run_as", "status"],
+		)
+		self.assertEqual(
+			unrecorded,
+			[
+				{
+					"gateway": "Asaas",
+					"reference_docname": self.reference.name,
+					"run_as": request.owner,
+					"status": "Retrying",
+				}
+			],
+		)
 
 	def test_a_refused_charge_fails_the_request(self):
 		request = self.make_request()
@@ -883,16 +1010,3 @@ class IntegrationTestTheWebhook(AsaasIntegrationTestCase):
 				},
 			)
 		)
-
-
-class IntegrationTestRunningAsThePayer(IntegrationTestCase):
-	def test_the_session_is_restored_even_when_the_reference_raises(self):
-		frappe.set_user("Guest")
-		self.addCleanup(frappe.set_user, "Administrator")
-
-		with self.assertRaises(RuntimeError):
-			with as_user("Administrator"):
-				self.assertEqual(frappe.session.user, "Administrator")
-				raise RuntimeError("the consuming app is broken")
-
-		self.assertEqual(frappe.session.user, "Guest")

@@ -3,7 +3,22 @@ $(document).ready(function () {
 	var button = document.querySelector("#submit-button");
 	var cpfCnpjInput = document.querySelector("#cpf-cnpj");
 	var cpfCnpjError = document.querySelector("#cpf-cnpj-error");
+	var cpfCnpjOnFile = document.querySelector("#cpf-cnpj-on-file");
 	var token = "{{ token }}";
+
+	// The document on file is never sent to the page. Submitting without one
+	// tells the server to use it; choosing another brings the input back.
+	var useCpfCnpjOnFile = !!cpfCnpjOnFile;
+	if (cpfCnpjOnFile) {
+		document.querySelector("#use-another-cpf-cnpj").addEventListener("click", function (event) {
+			event.preventDefault();
+			useCpfCnpjOnFile = false;
+			cpfCnpjOnFile.classList.add("hidden");
+			document.querySelector("#cpf-cnpj-group").classList.remove("hidden");
+			cpfCnpjInput.setAttribute("required", true);
+			cpfCnpjInput.focus();
+		});
+	}
 
 	function digitsOf(value) {
 		return (value || "").replace(/\D/g, "");
@@ -62,8 +77,8 @@ $(document).ready(function () {
 	form.addEventListener("submit", function (event) {
 		event.preventDefault();
 
-		var cpfCnpj = digitsOf(cpfCnpjInput.value);
-		if (!isValidCpfCnpj(cpfCnpj)) {
+		var cpfCnpj = useCpfCnpjOnFile ? "" : digitsOf(cpfCnpjInput.value);
+		if (!useCpfCnpjOnFile && !isValidCpfCnpj(cpfCnpj)) {
 			cpfCnpjError.classList.remove("hidden");
 			cpfCnpjInput.focus();
 			return;

@@ -74,6 +74,7 @@ from frappe.utils import call_hook_method, cint, get_datetime, get_url
 from frappe.utils.data import get_system_timezone
 
 from payments.utils import create_payment_gateway
+from payments.utils.recording import record_payment
 
 api_path = "/api/method/payments.payment_gateways.doctype.paypal_settings.paypal_settings"
 
@@ -331,9 +332,9 @@ def confirm_payment(token):
 			)
 
 			if data.get("reference_doctype") and data.get("reference_docname"):
-				custom_redirect_to = frappe.get_doc(
-					data.get("reference_doctype"), data.get("reference_docname")
-				).run_method("on_payment_authorized", "Completed")
+				custom_redirect_to = record_payment(
+					token, data.get("reference_doctype"), data.get("reference_docname"), "Completed"
+				)
 				frappe.db.commit()
 
 			redirect_url = "payment-success?doctype={}&docname={}".format(
@@ -400,9 +401,9 @@ def create_recurring_profile(token, payerid):
 				data["subscription_id"] = response.get("PROFILEID")[0]
 
 				frappe.flags.data = data
-				custom_redirect_to = frappe.get_doc(
-					data.get("reference_doctype"), data.get("reference_docname")
-				).run_method("on_payment_authorized", status_changed_to)
+				custom_redirect_to = record_payment(
+					token, data.get("reference_doctype"), data.get("reference_docname"), status_changed_to
+				)
 				frappe.db.commit()
 
 			redirect_url = "payment-success?doctype={}&docname={}".format(

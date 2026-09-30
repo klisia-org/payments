@@ -10,6 +10,10 @@ first sent to the `asaas_checkout` page to fill that in. The charge is created
 from there and the payer is forwarded to the Asaas hosted invoice, where Boleto,
 Pix and credit card are offered.
 
+An app that already knows the payer's CPF/CNPJ can spare them the typing with a
+`payer_tax_id` hook - `(payer_email, reference_doctype, reference_docname)` to
+the document, or None. The page then shows it masked and asks only to confirm.
+
 ### 1. Validate Currency
 
 Example:
@@ -61,7 +65,6 @@ Settings before going live, otherwise no payment is ever marked as completed.
 import hmac
 import json
 import re
-from contextlib import contextmanager
 from urllib.parse import urlencode
 
 import frappe
@@ -72,9 +75,19 @@ from frappe.integrations.utils import (
 	make_post_request,
 )
 from frappe.model.document import Document
-from frappe.utils import add_days, call_hook_method, cint, flt, get_url, getdate, nowdate
+from frappe.utils import (
+	add_days,
+	call_hook_method,
+	cint,
+	flt,
+	get_url,
+	getdate,
+	nowdate,
+	validate_email_address,
+)
 
 from payments.utils import create_payment_gateway
+from payments.utils.recording import record_payment
 
 API_BASE_URL = {
 	"Sandbox": "https://api-sandbox.asaas.com/v3",
@@ -214,6 +227,10 @@ class AsaasSettings(Document):
 		CPF/CNPJ that Asaas requires on every customer.
 		"""
 		self.data = frappe._dict(data)
+		if not self.data.get("cpf_cnpj"):
+			# the payer kept the CPF/CNPJ on file, which the page never had
+			details = frappe.db.get_value("Integration Request", self.data.token, "data")
+			self.data.cpf_cnpj = get_payer_tax_id(json.loads(details or "{}"))
 		# validated up front so a typo reaches the payer instead of the generic
 		# server error the rest of this method falls back to
 		self.data.cpf_cnpj = sanitize_cpf_cnpj(self.data.cpf_cnpj)
@@ -393,11 +410,21 @@ class AsaasSettings(Document):
 		"""Point the Asaas account's webhook at this site."""
 		frappe.only_for("System Manager")
 
+		# Asaas mails this address when deliveries fail, and the session user is
+		# not always an email - Administrator is just "Administrator"
+		email = frappe.db.get_value("User", frappe.session.user, "email")
+		if not validate_email_address(email or ""):
+			frappe.throw(
+				_(
+					"Set a valid email on your user before registering the webhook. Asaas writes to it when deliveries fail."
+				)
+			)
+
 		url = get_webhook_url()
 		payload = {
 			"name": f"Frappe Payments ({frappe.local.site})",
 			"url": url,
-			"email": frappe.session.user,
+			"email": email,
 			"enabled": True,
 			"interrupted": False,
 			"apiVersion": 3,
@@ -466,6 +493,37 @@ def sanitize_cpf_cnpj(cpf_cnpj: str | None) -> str:
 	return digits
 
 
+def get_payer_tax_id(details) -> str | None:
+	"""The CPF/CNPJ an installed app already holds for this payer, or None.
+
+	Apps answer through the `payer_tax_id` hook, called with the payer's email
+	and the reference document. Looked up again whenever it is needed rather
+	than stored, so it stays off the Integration Request like a typed one does.
+	"""
+	for method in frappe.get_hooks("payer_tax_id"):
+		try:
+			value = frappe.get_attr(method)(
+				payer_email=details.get("payer_email"),
+				reference_doctype=details.get("reference_doctype"),
+				reference_docname=details.get("reference_docname"),
+			)
+		except Exception:
+			# the payer can still type it, so a broken lookup must not stop them
+			frappe.log_error(title="Asaas payer tax ID lookup failed")
+			continue
+
+		digits = re.sub(r"\D", "", value or "")
+		if is_valid_cpf_cnpj(digits):
+			return digits
+
+
+def mask_cpf_cnpj(digits: str) -> str:
+	"""`***.444.777-**`: enough for the payer to recognise it, not to reuse it."""
+	if len(digits) == 11:
+		return f"***.{digits[3:6]}.{digits[6:9]}-**"
+	return f"**.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-**"
+
+
 def is_valid_cpf_cnpj(digits: str) -> bool:
 	if len(digits) == 11:
 		weights = [list(range(10, 1, -1)), list(range(11, 1, -1))]
@@ -485,18 +543,6 @@ def is_valid_cpf_cnpj(digits: str) -> bool:
 			return False
 
 	return True
-
-
-@contextmanager
-def as_user(user: str):
-	"""Run as the payer so that `on_payment_authorized` sees the same session
-	the payment was started with - the webhook itself arrives as Guest."""
-	original_user = frappe.session.user
-	frappe.set_user(user)
-	try:
-		yield
-	finally:
-		frappe.set_user(original_user)
 
 
 @frappe.whitelist(allow_guest=True)
@@ -583,14 +629,14 @@ def handle_payment_paid(integration_request, payment):
 	data = frappe._dict(json.loads(integration_request.data))
 	integration_request.update_status({"asaas_payment_id": payment.get("id")}, "Completed")
 
-	if data.reference_doctype and data.reference_docname:
-		try:
-			with as_user(integration_request.owner):
-				frappe.get_doc(data.reference_doctype, data.reference_docname).run_method(
-					"on_payment_authorized", "Completed"
-				)
-		except Exception:
-			frappe.log_error(frappe.get_traceback(), "Asaas on_payment_authorized Failed")
+	# as the payer, so that `on_payment_authorized` sees the same session the
+	# payment was started with - the webhook itself arrives as Guest
+	record_payment(
+		integration_request,
+		data.reference_doctype,
+		data.reference_docname,
+		run_as=integration_request.owner,
+	)
 
 	return {"status": "Completed"}
 

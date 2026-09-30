@@ -1,0 +1,175 @@
+{
+ "actions": [],
+ "autoname": "UNREC-.#####",
+ "creation": "2026-09-30 12:00:00.000000",
+ "description": "A payment the gateway confirmed but this site could not record. It is retried every hour, three times, before staff are told.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "gateway",
+  "integration_request",
+  "column_break_ref",
+  "reference_doctype",
+  "reference_docname",
+  "payment_status",
+  "section_break_retry",
+  "attempts",
+  "last_attempt",
+  "run_as",
+  "column_break_retry",
+  "resolved_by",
+  "section_break_error",
+  "error",
+  "flags_data"
+ ],
+ "fields": [
+  {
+   "default": "Retrying",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Retrying\nNeeds Attention\nResolved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gateway",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Gateway",
+   "read_only": 1
+  },
+  {
+   "fieldname": "integration_request",
+   "fieldtype": "Link",
+   "label": "Integration Request",
+   "options": "Integration Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ref",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Document Type",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_docname",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Reference Document",
+   "options": "reference_doctype",
+   "read_only": 1
+  },
+  {
+   "description": "The payment status the gateway reported, passed on when the payment is recorded.",
+   "fieldname": "payment_status",
+   "fieldtype": "Data",
+   "label": "Payment Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_retry",
+   "fieldtype": "Section Break",
+   "label": "Retries"
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_attempt",
+   "fieldtype": "Datetime",
+   "label": "Last Attempt",
+   "read_only": 1
+  },
+  {
+   "description": "Retries run as this user, the same one the gateway recorded the payment as.",
+   "fieldname": "run_as",
+   "fieldtype": "Link",
+   "label": "Run As",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_retry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "resolved_by",
+   "fieldtype": "Link",
+   "label": "Resolved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_error",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Code",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "flags_data",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Gateway Data",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-30 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Payments",
+ "name": "Unrecorded Payment",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Orange",
+   "title": "Retrying"
+  },
+  {
+   "color": "Red",
+   "title": "Needs Attention"
+  },
+  {
+   "color": "Green",
+   "title": "Resolved"
+  }
+ ],
+ "title_field": "reference_docname",
+ "track_changes": 1
+}
