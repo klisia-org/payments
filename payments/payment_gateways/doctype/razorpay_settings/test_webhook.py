@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils.logging import get_log_db
+
+try:
+	from frappe.utils.logging import get_log_db
+except ImportError:  # Frappe 16 keeps Error Logs in the main database
+	def get_log_db():
+		return frappe.db
 
 from payments.payment_gateways.doctype.razorpay_settings.razorpay_settings import RazorpaySettings
 from payments.payment_gateways.doctype.razorpay_settings.webhook import (
