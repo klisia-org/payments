@@ -41,23 +41,38 @@ def create_subscription_on_stripe(stripe_settings):
 		items.append({"price": plan, "quantity": payment_plan.qty})
 
 	try:
+		payment_method = stripe_settings.data.payment_method_id
 		customer = stripe.Customer.create(
-			source=stripe_settings.data.stripe_token_id,
+			payment_method=payment_method,
+			invoice_settings={"default_payment_method": payment_method},
 			description=stripe_settings.data.payer_name,
 			email=stripe_settings.data.payer_email,
 		)
-
-		subscription = stripe.Subscription.create(customer=customer, items=items)
-
-		if subscription.status == "active":
-			stripe_settings.integration_request.db_set("status", "Completed", update_modified=False)
-			stripe_settings.flags.status_changed_to = "Completed"
-
-		else:
-			stripe_settings.integration_request.db_set("status", "Failed", update_modified=False)
-			frappe.log_error(f"Stripe Subscription ID {subscription.id}: Payment failed")
+		subscription = stripe.Subscription.create(
+			customer=customer.id,
+			items=items,
+			expand=["latest_invoice.payment_intent"],
+			metadata={"integration_request": stripe_settings.integration_request.name},
+		)
+		stripe_settings.integration_request.db_set("request_id", subscription.id, update_modified=False)
+		return settle_subscription(stripe_settings, subscription)
 	except Exception:
 		stripe_settings.integration_request.db_set("status", "Failed", update_modified=False)
 		stripe_settings.log_error("Unable to create Stripe subscription")
 
+	return stripe_settings.finalize_request()
+
+
+def settle_subscription(stripe_settings, subscription):
+	"""Active, or waiting on 3-D Secure for its first invoice, or failed."""
+	invoice = subscription.latest_invoice
+	intent = invoice.get("payment_intent") if invoice else None
+	if subscription.status == "active":
+		stripe_settings.integration_request.db_set("status", "Completed", update_modified=False)
+		stripe_settings.flags.status_changed_to = "Completed"
+	elif subscription.status == "incomplete" and intent and intent.status == "requires_action":
+		return stripe_settings.needs_action(intent.client_secret)
+	else:
+		stripe_settings.integration_request.db_set("status", "Failed", update_modified=False)
+		frappe.log_error(f"Stripe Subscription ID {subscription.id}: Payment failed")
 	return stripe_settings.finalize_request()

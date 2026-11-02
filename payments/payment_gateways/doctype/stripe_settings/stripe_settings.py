@@ -1,6 +1,7 @@
 # Copyright (c) 2017, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+import json
 from types import MappingProxyType
 from urllib.parse import urlencode
 
@@ -170,7 +171,7 @@ class StripeSettings(Document):
 				)
 			}
 			try:
-				make_get_request(url="https://api.stripe.com/v1/charges", headers=header)
+				make_get_request(url="https://api.stripe.com/v1/payment_intents?limit=1", headers=header)
 			except Exception:
 				frappe.throw(_("Seems Publishable Key or Secret Key is wrong !!!"))
 
@@ -195,16 +196,34 @@ class StripeSettings(Document):
 		return get_url(f"./stripe_checkout?{urlencode(kwargs)}")
 
 	def create_request(self, data):
+		"""Charge the payment method the Payment Element created (decision 002 §2)."""
 		import stripe
 
 		self.data = frappe._dict(data)
-		stripe.api_key = self.get_password(fieldname="secret_key", raise_exception=False)
-		stripe.default_http_client = stripe.http_client.RequestsClient()
+		set_api_key(self)
 
 		try:
 			self.integration_request = create_request_log(self.data, service_name="Stripe")
-			return self.create_charge_on_stripe()
-
+			intent = stripe.PaymentIntent.create(
+				amount=to_minor_units(self.data.amount, self.data.currency),
+				currency=self.data.currency.lower(),
+				payment_method=self.data.payment_method_id,
+				payment_method_types=["card"],
+				confirm=True,
+				description=self.data.description,
+				receipt_email=self.data.payer_email or None,
+				metadata={
+					"integration_request": self.integration_request.name,
+					"reference_doctype": self.data.reference_doctype,
+					"reference_docname": self.data.reference_docname,
+				},
+			)
+			self.integration_request.db_set("request_id", intent.id, update_modified=False)
+			return self.settle(intent)
+		except stripe.error.CardError as e:
+			# A decline: the payer can try another card on the same page.
+			self.integration_request.db_set("status", "Failed", update_modified=False)
+			return {"status": "Failed", "message": e.user_message}
 		except Exception:
 			frappe.log_error(frappe.get_traceback())
 			return {
@@ -217,29 +236,47 @@ class StripeSettings(Document):
 				"status": 401,
 			}
 
-	def create_charge_on_stripe(self):
+	def confirm_request(self, integration_request):
+		"""After 3-D Secure, settle the intent or subscription the request started."""
 		import stripe
 
-		try:
-			charge = stripe.Charge.create(
-				amount=cint(flt(self.data.amount) * 100),
-				currency=self.data.currency,
-				source=self.data.stripe_token_id,
-				description=self.data.description,
-				receipt_email=self.data.payer_email,
+		from payments.payment_gateways.stripe_integration import settle_subscription
+
+		self.integration_request = integration_request
+		self.data = frappe._dict(json.loads(integration_request.data))
+		if integration_request.status == "Completed":
+			return {"status": "Completed", "redirect_to": self.success_url()}
+		set_api_key(self)
+		if (integration_request.request_id or "").startswith("sub_"):
+			subscription = stripe.Subscription.retrieve(
+				integration_request.request_id, expand=["latest_invoice.payment_intent"]
 			)
+			return settle_subscription(self, subscription)
+		return self.settle(stripe.PaymentIntent.retrieve(integration_request.request_id))
 
-			if charge.captured is True:
-				self.integration_request.db_set("status", "Completed", update_modified=False)
-				self.flags.status_changed_to = "Completed"
-
-			else:
-				frappe.log_error(charge.failure_message, "Stripe Payment not completed")
-
-		except Exception:
-			frappe.log_error(frappe.get_traceback())
-
+	def settle(self, intent):
+		if intent.status == "succeeded":
+			self.integration_request.db_set("status", "Completed", update_modified=False)
+			self.flags.status_changed_to = "Completed"
+		elif intent.status == "requires_action":
+			return self.needs_action(intent.client_secret)
+		else:
+			self.integration_request.db_set("status", "Failed", update_modified=False)
+			frappe.log_error(
+				f"Stripe PaymentIntent {intent.id}: {intent.status}", "Stripe Payment not completed"
+			)
 		return self.finalize_request()
+
+	def needs_action(self, client_secret):
+		return {
+			"status": "Queued",
+			"requires_action": True,
+			"client_secret": client_secret,
+			"integration_request": self.integration_request.name,
+		}
+
+	def success_url(self):
+		return f"payment-success?doctype={self.data.reference_doctype}&docname={self.data.reference_docname}"
 
 	def finalize_request(self):
 		redirect_to = self.data.get("redirect_to") or None
@@ -259,7 +296,7 @@ class StripeSettings(Document):
 				if custom_redirect_to:
 					redirect_to = custom_redirect_to
 
-				redirect_url = f"payment-success?doctype={self.data.reference_doctype}&docname={self.data.reference_docname}"
+				redirect_url = self.success_url()
 
 			if self.redirect_url:
 				redirect_url = self.redirect_url
@@ -274,6 +311,42 @@ class StripeSettings(Document):
 			redirect_url += "&" + urlencode({"redirect_message": redirect_message})
 
 		return {"redirect_to": redirect_url, "status": status}
+
+
+# Stripe charges these in whole units, not cents.
+ZERO_DECIMAL_CURRENCIES = frozenset(
+	(
+		"BIF",
+		"CLP",
+		"DJF",
+		"GNF",
+		"JPY",
+		"KMF",
+		"KRW",
+		"MGA",
+		"PYG",
+		"RWF",
+		"UGX",
+		"VND",
+		"VUV",
+		"XAF",
+		"XOF",
+		"XPF",
+	)
+)
+
+
+def to_minor_units(amount, currency):
+	if (currency or "").upper() in ZERO_DECIMAL_CURRENCIES:
+		return cint(round(flt(amount)))
+	return cint(round(flt(amount) * 100))
+
+
+def set_api_key(settings):
+	import stripe
+
+	stripe.api_key = settings.get_password(fieldname="secret_key", raise_exception=False)
+	stripe.default_http_client = stripe.http_client.RequestsClient()
 
 
 def get_gateway_controller(doctype, docname, payment_gateway=None):

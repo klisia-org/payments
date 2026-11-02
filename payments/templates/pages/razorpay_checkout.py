@@ -6,6 +6,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
+from payments.utils import payment_page
 from payments.utils.utils import validate_integration_request
 
 no_cache = 1
@@ -42,6 +43,29 @@ def get_context(context):
 		context["subscription_id"] = (
 			payment_details["subscription_id"] if payment_details.get("subscription_id") else ""
 		)
+		payment_page.prepare(context, "razorpay")
+		context.payment_boot = {
+			"csrf_token": context.csrf_token,
+			"options": {
+				"key": context.api_key,
+				"amount": cint(flt(context.amount) * 100),
+				"currency": context.currency,
+				"name": context.title,
+				"description": context.description,
+				"subscription_id": context.subscription_id,
+				"order_id": context.order_id,
+				"prefill": {"name": context.payer_name, "email": context.payer_email},
+				"notes": dict(frappe.form_dict),
+			},
+			"reference_doctype": context.reference_doctype,
+			"reference_docname": context.reference_docname,
+			"token": context.token,
+			"text": {
+				"confirming": _("Confirming Payment"),
+				"success": _("Your payment has been successfully registered."),
+				"error": _("An error occured during the payment process. Please contact us."),
+			},
+		}
 
 	except Exception:
 		frappe.redirect_to_message(

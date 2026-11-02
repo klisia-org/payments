@@ -11,6 +11,7 @@ from payments.payment_gateways.doctype.braintree_settings.braintree_settings imp
 	get_client_token,
 	get_gateway_controller,
 )
+from payments.utils import payment_page
 
 no_cache = 1
 
@@ -40,7 +41,17 @@ def get_context(context):
 		context["amount"] = flt(context["amount"])
 
 		gateway_controller = get_gateway_controller(context.reference_docname)
-		context["header_img"] = frappe.db.get_value("Braintree Settings", gateway_controller, "header_img")
+		context.logo = frappe.db.get_value("Braintree Settings", gateway_controller, "header_img")
+		payment_page.prepare(context, "braintree")
+		context.payment_boot = {
+			"csrf_token": context.csrf_token,
+			"client_token": context.client_token,
+			"data": dict(frappe.form_dict),
+			"text": {
+				"success": _("Your payment has been successfully registered."),
+				"error": _("An error occured during the payment process. Please contact us."),
+			},
+		}
 
 	else:
 		frappe.redirect_to_message(
@@ -53,7 +64,8 @@ def get_context(context):
 
 @frappe.whitelist(allow_guest=True)
 def make_payment(payload_nonce, data, reference_doctype, reference_docname):
-	data = json.loads(data)
+	if isinstance(data, str):
+		data = json.loads(data)
 
 	data.update({"payload_nonce": payload_nonce})
 

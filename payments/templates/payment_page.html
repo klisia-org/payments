@@ -1,0 +1,40 @@
+<!doctype html>
+{#- The bare page for a gateway's card frame (decision 002 §1). It extends nothing: no Website
+    Script, head HTML or web_include_js runs here. Every script it loads is in its policy. -#}
+<html lang="{{ (frappe.local.lang or 'en') | e }}">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="robots" content="noindex">
+	<title>{{ _("Payment") }}</title>
+	<style>
+		:root { --payment-primary: #2563eb; --payment-text: #1f2937; --payment-background: #ffffff; }
+		{{ brand_css }}
+		body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			color: var(--payment-text); background: var(--payment-background); }
+		.payment { max-width: 480px; margin: 40px auto; padding: 0 16px; }
+		.payment img.logo { display: block; max-height: 64px; margin: 0 auto 16px; }
+		.payment h1 { font-size: 18px; text-align: center; margin: 0 0 24px; }
+		.payment label { display: block; font-size: 14px; margin-bottom: 12px; }
+		.payment input { display: block; width: 100%; box-sizing: border-box; padding: 10px; margin-top: 4px;
+			border: 1px solid #d1d5db; border-radius: 6px; font-size: 16px; }
+		.payment button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 6px;
+			background: var(--payment-primary); color: #fff; font-size: 16px; cursor: pointer; }
+		.payment button[disabled] { opacity: 0.6; cursor: default; }
+		.payment .message { margin-top: 16px; text-align: center; font-size: 14px; }
+		.payment .message.error { color: #b91c1c; }
+		[hidden] { display: none !important; }
+	</style>
+</head>
+<body>
+	<main class="payment">
+		{% if logo %}<img class="logo" src="{{ logo | e }}" alt="">{% endif %}
+		{% block content %}{% endblock %}
+		<p class="message" id="payment-message" role="alert" hidden></p>
+	</main>
+	<script type="application/json" id="payment-boot">{{ payment_boot | tojson }}</script>
+	<script src="/assets/payments/js/payment_page.js"></script>
+	<script src="{{ gateway_script }}"></script>
+	<script src="{{ page_script }}"></script>
+</body>
+</html>
