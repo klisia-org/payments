@@ -1,7 +1,7 @@
 # 001 — Payments the site failed to record
 
 **Date:** 2026-09-30
-**Status:** Accepted
+**Status:** Accepted 2026-09-30; implemented 2026-09-30 (2248736)
 
 ## Context
 
