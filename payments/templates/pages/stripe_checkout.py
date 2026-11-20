@@ -86,9 +86,14 @@ def get_header_image(doc, gateway_controller):
 	return frappe.db.get_value("Stripe Settings", gateway_controller, "header_img")
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest checkout: buyers pay without a site account.
+@frappe.whitelist(allow_guest=True)  # nosemgrep
 def make_payment(
-	payment_method_id, data, reference_doctype=None, reference_docname=None, payment_gateway=None
+	payment_method_id: str,
+	data: str | dict,
+	reference_doctype: str | None = None,
+	reference_docname: str | None = None,
+	payment_gateway: str | None = None,
 ):
 	if isinstance(data, str):
 		data = json.loads(data)
@@ -103,7 +108,8 @@ def make_payment(
 	else:
 		data = frappe.get_doc("Stripe Settings", gateway_controller).create_request(data)
 
-	frappe.db.commit()
+	# Also reachable over GET, which Frappe does not commit, and the payment must be recorded.
+	frappe.db.commit()  # nosemgrep
 	return data
 
 
