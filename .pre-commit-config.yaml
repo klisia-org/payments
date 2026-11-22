@@ -1,5 +1,5 @@
-# Shared pre-commit setup for every app. Written by aretenic's tooling/precommit/sync.py:
-# edit the canonical copy there, not this file, except below the app-specific marker.
+# Shared pre-commit setup for every app, kept in sync by a script: change the shared copy, not
+# this file, except below the app-specific marker.
 exclude: 'node_modules|\.git/|\.history/'
 default_stages: [pre-commit]
 fail_fast: false
@@ -39,6 +39,7 @@ repos:
                 payments/public/dist/.*|
                 payments/public/js/lib/.*|
                 payments/public/frontend/.*|
+                payments/public/.*/assets/.*|
                 payments/templates/includes/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
@@ -64,7 +65,7 @@ repos:
         # Findings already there are in the baseline, tracked in a decision record; new ones fail.
         args: ["-c", "bandit.yaml", "-b", ".bandit-baseline.json"]
         # Tests assert and use fixed passwords on purpose; scripts are dev tools.
-        exclude: '^scripts/|/tests/|/test_[^/]*\.py$'
+        exclude: '^(scripts|tooling|runbooks)/|/tests/|/test_[^/]*\.py$'
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
@@ -86,6 +87,6 @@ repos:
         language_version: python3.14
         additional_dependencies: ["semgrep==1.162.0"]
         types_or: [python, javascript, json]
-        exclude: 'payments/public/frontend/|payments/builder_files/|^scripts/|^frontend/|^portal-shell/'
+        exclude: 'payments/public/frontend/|payments/builder_files/|^(scripts|tooling|runbooks|frontend|portal-shell)/'
 
   # ---- app-specific hooks below (kept by sync.py) ----

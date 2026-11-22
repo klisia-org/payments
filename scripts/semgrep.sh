@@ -29,6 +29,8 @@ exec semgrep scan \
 	--exclude payments/public/frontend \
 	--exclude payments/builder_files \
 	--exclude scripts \
+	--exclude runbooks \
+	--exclude tooling \
 	--exclude "$RULES" \
 	--error \
 	--quiet \

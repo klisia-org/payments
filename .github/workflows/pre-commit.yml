@@ -1,4 +1,4 @@
-# Shared CI check. Written by aretenic's tooling/precommit/sync.py.
+# Shared CI check, kept the same in every app by a sync script: change the shared copy.
 name: Pre-commit
 
 on:

@@ -151,15 +151,7 @@
 		"QUnit": true,
 		"onScan": true,
 		"Plaid": true,
-		"agora": true,
-		"apotheke": true,
-		"aretenic": true,
-		"klisia": true,
-		"koinonia": true,
-		"logistes": true,
-		"oikonomos": true,
-		"payments": true,
 		"seminary": true,
-		"tamias": true
+		"payments": true
 	}
 }

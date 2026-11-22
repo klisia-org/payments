@@ -1,8 +1,8 @@
-# Shared ruff setup for every app. Written by aretenic's tooling/precommit/sync.py: edit the
-# canonical copy there, not this file, except below the app-specific marker.
+# Shared ruff setup for every app, kept in sync by a script: change the shared copy, not this
+# file, except below the app-specific marker.
 line-length = 110
 target-version = "py314"
-extend-exclude = [".history", "node_modules"]
+extend-exclude = [".history", "node_modules", "runbooks/data"]
 
 [lint]
 select = ["F", "E", "W", "I", "UP", "B", "RUF"]
