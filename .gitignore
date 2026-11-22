@@ -14,3 +14,4 @@ __pycache__/
 
 # Claude Code: the shared settings.json is versioned, the local override is not
 .claude/settings.local.json
+.frappe-semgrep/
