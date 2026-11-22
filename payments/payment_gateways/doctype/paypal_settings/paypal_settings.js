@@ -2,5 +2,5 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on("PayPal Settings", {
-  refresh: function (frm) {},
+	refresh: function (frm) {},
 });
