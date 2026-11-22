@@ -132,9 +132,9 @@ class TestMpesaSettings(PaymentsTestSuite):
 
 		# forged callback without the token sent with the balance request must not change anything
 		forged_response = get_account_balance_callback_payload()
-		forged_response["Result"]["ResultParameters"]["ResultParameter"][0][
-			"Value"
-		] = "Working Account|KES|1.00|1.00|0.00|0.00"
+		forged_response["Result"]["ResultParameters"]["ResultParameter"][0]["Value"] = (
+			"Working Account|KES|1.00|1.00|0.00|0.00"
+		)
 		for token in (None, "wrong-token"):
 			self.assertRaises(
 				frappe.AuthenticationError, verify_callback, forged_response, token, process_balance_info

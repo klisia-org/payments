@@ -13,7 +13,9 @@ frappe.ui.form.on("Unrecorded Payment", {
 
     frm.add_custom_button(__("Mark Resolved"), () => {
       frappe.confirm(
-        __("Mark this payment as recorded? Do this only after recording it by hand."),
+        __(
+          "Mark this payment as recorded? Do this only after recording it by hand."
+        ),
         () => frm.call("mark_resolved").then(() => frm.reload_doc())
       );
     });
