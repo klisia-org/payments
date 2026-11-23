@@ -27,6 +27,9 @@ from payments.payment_gateways.doctype.asaas_settings.asaas_settings import (
 	sanitize_cpf_cnpj,
 	webhook,
 )
+from payments.utils.settlement import get_settlement, record_settlement
+
+ASAAS = "payments.payment_gateways.doctype.asaas_settings.asaas_settings"
 
 VALID_CPF = "111.444.777-35"
 VALID_CNPJ = "11.222.333/0001-81"
@@ -1009,4 +1012,192 @@ class IntegrationTestTheWebhook(AsaasIntegrationTestCase):
 					"data": ["like", f'%"original_request": "{request.name}"%'],
 				},
 			)
+		)
+
+
+class IntegrationTestTheSettlement(AsaasIntegrationTestCase):
+	"""What Asaas reports about a paid charge is kept for payout reconciliation.
+
+	The class shares one transaction, so every test makes its own Asaas ids.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		self.enterContext(patch.object(AsaasSettings, "get_password", stored_password))
+		self.ids = {}
+
+	def id(self, label):
+		return self.ids.setdefault(label, f"{label}_{frappe.generate_hash(length=8)}")
+
+	def call(self, payload):
+		with asaas_calls_back(payload), contained():
+			return webhook()
+
+	def charge(self, event, id="pay_1", subscription=None, **payment):
+		payment = {"id": self.id(id), "value": 100.0, "netValue": 97.01, **payment}
+		if subscription:
+			payment["subscription"] = self.id(subscription)
+		return {"event": event, "payment": payment}
+
+	def renewals_of(self, request):
+		return frappe.get_all(
+			"Integration Request",
+			filters={
+				"integration_request_service": "Asaas",
+				"data": ["like", f'%"original_request": "{request.name}"%'],
+			},
+			pluck="name",
+		)
+
+	def subscription(self):
+		return self.make_request(
+			status="Queued",
+			ids={"asaas_subscription_id": self.id("sub_1")},
+			subscription_details={"cycle": "MONTHLY"},
+		)
+
+	def test_a_paid_charge_keeps_what_asaas_reported(self):
+		request = self.make_request()
+
+		self.call(
+			self.charge("PAYMENT_CONFIRMED", externalReference=request.name, estimatedCreditDate="2026-12-01")
+		)
+
+		self.assertEqual(
+			get_settlement(request.name),
+			{
+				"processor_id": self.id("pay_1"),
+				"gross": 100.0,
+				"fee": 2.99,
+				"net": 97.01,
+				"credit_date": None,
+				"estimated_credit_date": "2026-12-01",
+			},
+		)
+
+	def test_the_settlement_is_there_when_the_reference_is_told(self):
+		request = self.make_request()
+		seen = []
+
+		def remember(doc, payment_status):
+			seen.append(get_settlement(request.name))
+
+		with patch.object(ToDo, "on_payment_authorized", remember, create=True):
+			self.call(self.charge("PAYMENT_RECEIVED", externalReference=request.name))
+
+		self.assertEqual(seen[0]["processor_id"], self.id("pay_1"))
+
+	def test_a_charge_without_a_net_value_has_no_fee(self):
+		request = self.make_request()
+
+		self.call(self.charge("PAYMENT_RECEIVED", externalReference=request.name, value=50, netValue=None))
+
+		settlement = get_settlement(request.name)
+		self.assertEqual(settlement["gross"], 50.0)
+		self.assertIsNone(settlement["fee"])
+		self.assertIsNone(settlement["net"])
+
+	def test_the_credit_date_follows_the_confirmation_without_paying_twice(self):
+		request = self.make_request()
+		told = []
+
+		def remember(doc, payment_status):
+			told.append(payment_status)
+
+		with patch.object(ToDo, "on_payment_authorized", remember, create=True):
+			self.assertEqual(
+				self.call(
+					self.charge(
+						"PAYMENT_CONFIRMED", externalReference=request.name, estimatedCreditDate="2026-12-01"
+					)
+				),
+				{"status": "Completed"},
+			)
+			self.assertEqual(
+				self.call(
+					self.charge("PAYMENT_RECEIVED", externalReference=request.name, creditDate="2026-12-02")
+				),
+				{"status": "already handled"},
+			)
+
+		self.assertEqual(told, ["Completed"])
+		settlement = get_settlement(request.name)
+		self.assertEqual(settlement["credit_date"], "2026-12-02")
+		# kept from the confirmation, which the later event did not repeat
+		self.assertEqual(settlement["estimated_credit_date"], "2026-12-01")
+
+	def test_the_first_charge_of_a_subscription_is_not_taken_for_a_renewal(self):
+		request = self.subscription()
+
+		with patch(f"{ASAAS}.call_hook_method") as hook:
+			self.call(self.charge("PAYMENT_CONFIRMED", id="pay_2", subscription="sub_1"))
+			self.call(
+				self.charge("PAYMENT_RECEIVED", id="pay_2", subscription="sub_1", creditDate="2026-12-02")
+			)
+
+		self.assertFalse(self.renewals_of(request))
+		self.assertFalse(hook.called)
+		self.assertEqual(get_settlement(request.name)["credit_date"], "2026-12-02")
+
+	def test_a_renewal_confirmed_then_received_is_notified_once(self):
+		request = self.subscription()
+		self.call(self.charge("PAYMENT_RECEIVED", id="pay_2", subscription="sub_1"))
+
+		with patch(f"{ASAAS}.call_hook_method") as hook:
+			self.call(
+				self.charge(
+					"PAYMENT_CONFIRMED", id="pay_3", subscription="sub_1", estimatedCreditDate="2026-12-30"
+				)
+			)
+			self.call(
+				self.charge("PAYMENT_RECEIVED", id="pay_3", subscription="sub_1", creditDate="2026-12-31")
+			)
+
+		renewals = self.renewals_of(request)
+		self.assertEqual(len(renewals), 1)
+		hook.assert_called_once_with(
+			"handle_subscription_notification", doctype="Integration Request", docname=renewals[0]
+		)
+		settlement = get_settlement(renewals[0])
+		self.assertEqual(settlement["processor_id"], self.id("pay_3"))
+		self.assertEqual(settlement["net"], 97.01)
+		self.assertEqual(settlement["credit_date"], "2026-12-31")
+		self.assertEqual(settlement["estimated_credit_date"], "2026-12-30")
+
+	def test_every_renewal_points_back_to_the_request_the_payer_started(self):
+		request = self.subscription()
+		self.call(self.charge("PAYMENT_RECEIVED", id="pay_2", subscription="sub_1"))
+
+		with patch(f"{ASAAS}.call_hook_method") as hook:
+			self.call(self.charge("PAYMENT_RECEIVED", id="pay_3", subscription="sub_1"))
+			self.call(self.charge("PAYMENT_RECEIVED", id="pay_4", subscription="sub_1"))
+
+		self.assertEqual(len(self.renewals_of(request)), 2)
+		self.assertEqual(hook.call_count, 2)
+
+
+class UnitTestTheSettlementHelper(UnitTestCase):
+	def test_unknown_values_are_refused(self):
+		request = frappe._dict(data="{}")
+		with self.assertRaises(TypeError):
+			record_settlement(request, payout="x")
+
+	def test_values_are_merged_and_normalised(self):
+		request = frappe._dict(data=json.dumps({"other": 1}))
+		request.db_set = lambda field, value, **kwargs: request.update({field: value})
+
+		record_settlement(request, processor_id=12, gross="10.5", credit_date=None)
+		settlement = record_settlement(request, credit_date=getdate("2026-12-02"), gross=None)
+
+		self.assertEqual(json.loads(request.data)["other"], 1)
+		self.assertEqual(
+			settlement,
+			{
+				"processor_id": "12",
+				"gross": 10.5,
+				"fee": None,
+				"net": None,
+				"credit_date": "2026-12-02",
+				"estimated_credit_date": None,
+			},
 		)

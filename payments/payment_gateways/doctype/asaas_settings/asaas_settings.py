@@ -88,6 +88,7 @@ from frappe.utils import (
 
 from payments.utils import create_payment_gateway
 from payments.utils.recording import record_payment
+from payments.utils.settlement import record_settlement
 
 API_BASE_URL = {
 	"Sandbox": "https://api-sandbox.asaas.com/v3",
@@ -608,6 +609,9 @@ def get_integration_request(payment):
 			filters={
 				"integration_request_service": "Asaas",
 				"data": ["like", f'%"{field}": "{value}"%'],
+				# the renewals logged for a subscription carry its id too, and
+				# the newest of them is not the request the payer started
+				"request_description": ["!=", "Subscription Notification"],
 			},
 			pluck="name",
 			order_by="creation desc",
@@ -619,15 +623,21 @@ def get_integration_request(payment):
 
 def handle_payment_paid(integration_request, payment):
 	if integration_request.status == "Completed":
-		# Either a redelivery of an event already acted on, or a renewal of a
-		# subscription whose first charge completed the request.
-		if payment.get("subscription"):
+		data = json.loads(integration_request.data or "{}")
+		if data.get("asaas_payment_id") == payment.get("id"):
+			# the same charge again: a redelivery, or PAYMENT_RECEIVED after
+			# PAYMENT_CONFIRMED, which brings the date the money was credited
+			record_asaas_settlement(integration_request, payment)
+		elif payment.get("subscription"):
+			# a renewal of a subscription whose first charge completed the request
 			notify_subscription_renewal(integration_request, payment)
 
 		return {"status": "already handled"}
 
 	data = frappe._dict(json.loads(integration_request.data))
 	integration_request.update_status({"asaas_payment_id": payment.get("id")}, "Completed")
+	# before the reference is told, so that it can already read the settlement
+	record_asaas_settlement(integration_request, payment)
 
 	# as the payer, so that `on_payment_authorized` sees the same session the
 	# payment was started with - the webhook itself arrives as Guest
@@ -641,6 +651,28 @@ def handle_payment_paid(integration_request, payment):
 	return {"status": "Completed"}
 
 
+def record_asaas_settlement(integration_request, payment):
+	"""Keep what Asaas reports about the charge for payout reconciliation.
+
+	`netValue` is what Asaas credits to the account balance after its fee;
+	`creditDate` only arrives with PAYMENT_RECEIVED, `estimatedCreditDate`
+	usually with PAYMENT_CONFIRMED already.
+	"""
+	gross = payment.get("value")
+	net = payment.get("netValue")
+	fee = flt(flt(gross) - flt(net), 2) if gross is not None and net is not None else None
+
+	return record_settlement(
+		integration_request,
+		processor_id=payment.get("id"),
+		gross=gross,
+		fee=fee,
+		net=net,
+		credit_date=payment.get("creditDate"),
+		estimated_credit_date=payment.get("estimatedCreditDate"),
+	)
+
+
 def handle_payment_failed(integration_request, event, payment):
 	if integration_request.status in ("Completed", "Failed"):
 		return {"status": "already handled"}
@@ -652,7 +684,26 @@ def handle_payment_failed(integration_request, event, payment):
 
 
 def notify_subscription_renewal(integration_request, payment):
-	"""Log the renewal and let the consuming app extend the subscription."""
+	"""Log the renewal and let the consuming app extend the subscription.
+
+	Asaas reports one renewal charge more than once - PAYMENT_CONFIRMED when a
+	card is approved, PAYMENT_RECEIVED when the money is credited - so a charge
+	already logged only has its settlement brought up to date.
+	"""
+	existing = frappe.get_all(
+		"Integration Request",
+		filters={
+			"integration_request_service": "Asaas",
+			"request_description": "Subscription Notification",
+			"data": ["like", f'%"asaas_payment_id": "{payment.get("id")}"%'],
+		},
+		pluck="name",
+		limit=1,
+	)
+	if existing:
+		record_asaas_settlement(frappe.get_doc("Integration Request", existing[0]), payment)
+		return
+
 	renewal = create_request_log(
 		{
 			"payment_gateway": "Asaas",
@@ -667,5 +718,6 @@ def notify_subscription_renewal(integration_request, payment):
 		is_remote_request=1,
 		status="Completed",
 	)
+	record_asaas_settlement(renewal, payment)
 
 	call_hook_method("handle_subscription_notification", doctype="Integration Request", docname=renewal.name)
