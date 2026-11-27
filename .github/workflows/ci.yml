@@ -124,7 +124,8 @@ jobs:
     name: Coverage Wrap Up
     needs: tests
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' }}
+    # Forks have no CODECOV_TOKEN; uploading without one fails the run.
+    if: ${{ github.event_name != 'pull_request' && github.repository == 'frappe/payments' }}
     steps:
       - name: Clone
         uses: actions/checkout@v6
